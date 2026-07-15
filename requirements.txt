@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic_settings
+SQLAlchemy
+pymysql
+sqlalchemy[asyncio] 
+aiomysql
+python-jose
+cryptography
+langchain_google_genai
+pwdlib
+pydantic[email]
+fastapi-mail
