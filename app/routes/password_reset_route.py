@@ -19,11 +19,10 @@ async def forgot_password(
     db: Session = Depends(get_db)
 ):
 
-    token = await create_reset_token(db, request.email)
+    await create_reset_token(db, request.email)
 
     return {
-        "message": "If the account exists, a password reset link has been sent.",
-        "token": token      # Remove this after email integration
+        "message": "If the account exists, a password reset link has been sent."
     }
     
     

@@ -1,7 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from .config import settings
 
-print("API KEY is ", settings.GOOGLE_API_KEY)
 class LLMManger:
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(

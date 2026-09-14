@@ -11,3 +11,8 @@ langchain_google_genai
 pwdlib
 pydantic[email]
 fastapi-mail
+google-genai 
+pinecone 
+python-multipart 
+pypdf 
+python-docx 

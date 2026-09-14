@@ -1,3 +1,5 @@
 myenv/
 .env
 *.pyc
+.sf/
+temp/
