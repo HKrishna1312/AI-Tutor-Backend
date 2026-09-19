@@ -1,7 +1,7 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from .config import settings
 
-class LLMManger:
+class LLMManager:
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(
             model="models/gemini-2.5-flash",
