@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 
@@ -127,6 +128,84 @@ def create_embeddings(chunks):
 
 
 # -----------------------------------------
+# Structured resume parsing (Gemini)
+# -----------------------------------------
+
+RESUME_SCHEMA = {
+    "name": "Full name",
+    "email": "Primary email address",
+    "phone": "Phone number",
+    "location": "City, Country",
+    "summary": "One or two sentence professional summary",
+    "skills": ["Skill", "Skill"],
+    "experience": [
+        {
+            "role": "Job title",
+            "company": "Company",
+            "period": "Start - End",
+            "points": ["Achievement bullet"],
+        }
+    ],
+    "education": [
+        {
+            "school": "School / University",
+            "degree": "Degree",
+            "period": "Dates",
+        }
+    ],
+    "projects": [
+        {
+            "name": "Project name",
+            "description": "Short description",
+        }
+    ],
+    "certifications": ["Certification"],
+    "score": 0,
+}
+
+
+def extract_resume_profile(text):
+
+    prompt = (
+        "You are an expert resume parser. Extract structured data from the "
+        "resume text below. Return ONLY valid JSON that matches this schema "
+        "exactly (use empty strings / empty arrays when a field is missing):\n\n"
+        + json.dumps(RESUME_SCHEMA)
+        + "\n\nRules:\n"
+        "- summary: one or two sentences.\n"
+        "- skills: list every named technology or tool.\n"
+        "- experience: one entry per role, with 1-4 concrete bullet points. "
+        "period as 'Start - End' (use 'Present' for an ongoing role).\n"
+        "- certifications: professional certifications only "
+        "(academic degrees belong in education).\n"
+        "- score: integer 0-100 estimating overall resume quality based on "
+        "impact, quantifiable results, and completeness.\n\n"
+        "RESUME TEXT:\n"
+        + text[:12000]
+    )
+
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json"
+        )
+    )
+
+    raw = response.text.strip()
+
+    if raw.startswith("```"):
+
+        raw = raw.strip("`")
+
+        if raw.startswith("json"):
+
+            raw = raw[4:]
+
+    return json.loads(raw)
+
+
+# -----------------------------------------
 # Process document
 # -----------------------------------------
 
@@ -210,6 +289,22 @@ async def process_document(file: UploadFile):
         )
 
     # -----------------------------------------
+    # Parse structured profile (best effort)
+    # -----------------------------------------
+
+    profile = None
+
+    try:
+
+        profile = extract_resume_profile(
+            text
+        )
+
+    except Exception:
+
+        profile = None
+
+    # -----------------------------------------
     # Split text
     # -----------------------------------------
 
@@ -278,5 +373,7 @@ async def process_document(file: UploadFile):
 
         "embedding_model": "gemini-embedding-001",
 
-        "vector_database": "Pinecone"
+        "vector_database": "Pinecone",
+
+        "profile": profile
     }
