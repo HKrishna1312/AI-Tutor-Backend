@@ -29,7 +29,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 payload = await verify_access_token(access_token)
                 
                 # Check if token is valid and has user_id
-                if payload and payload.get("user_id"):
+                if payload and payload.get("user_id"): #user_id is present in the payload
                     if message:
                         response = llm_manager.invoke(message)
                         output = {"output": response.content}

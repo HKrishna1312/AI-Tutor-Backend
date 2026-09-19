@@ -1,7 +1,12 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=r"D:\Per Project\AI Tutor\AI-Tutor-Backend\.env")
+    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env")
     DB_USER: str = ""
     DB_PORT: str = ""
     DB_NAME: str = ""

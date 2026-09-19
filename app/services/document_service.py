@@ -209,7 +209,7 @@ def extract_resume_profile(text):
 # Process document
 # -----------------------------------------
 
-async def process_document(file: UploadFile):
+async def process_document(file: UploadFile,user_id: str): #included user_id parameter to support multiple user resume queries.
 
     filename = file.filename
 
@@ -339,10 +339,12 @@ async def process_document(file: UploadFile):
                 "values": embedding,
 
                 "metadata": {
+                    "user_id": str(user_id),
                     "file_id": file_id,
                     "filename": filename,
                     "chunk_number": i,
                     "text": chunks[i]
+                    # user_id metadata to be added to support multiple user resume queries.
                 }
             }
         )
