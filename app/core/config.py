@@ -23,4 +23,5 @@ class Settings(BaseSettings):
     PINECONE_INDEX_NAME: str = ""
     PINECONE_NAMESPACE: str = "__default__"
     
+    
 settings = Settings()
