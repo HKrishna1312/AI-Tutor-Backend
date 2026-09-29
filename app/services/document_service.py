@@ -1,8 +1,10 @@
 import json
+import logging
 import os
 import uuid
 
 from fastapi import UploadFile, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from pypdf import PdfReader
 from docx import Document
@@ -11,7 +13,10 @@ from google import genai
 
 from pinecone import Pinecone
 from app.core.config import settings
+from app.models.resume_vectors import ResumeVectorTable
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 
 gemini_client = genai.Client(
@@ -209,7 +214,7 @@ def extract_resume_profile(text):
 # Process document
 # -----------------------------------------
 
-async def process_document(file: UploadFile,user_id: str): #included user_id parameter to support multiple user resume queries.
+async def process_document(file: UploadFile, user_id: str, db: AsyncSession): #included user_id parameter to support multiple user resume queries.
 
     filename = file.filename
 
@@ -359,6 +364,32 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
     )
 
     # -----------------------------------------
+    # Save Pinecone reference for this user
+    # -----------------------------------------
+
+    record = ResumeVectorTable(
+        user_id=str(user_id),
+        vector_id=file_id,
+        filename=filename,
+        index_name=settings.PINECONE_INDEX_NAME,
+        namespace=settings.PINECONE_NAMESPACE,
+        chunk_count=len(chunks)
+    )
+
+    db.add(record)
+
+    await db.commit()
+
+    await db.refresh(record)
+
+    logger.info(
+        f"Stored Pinecone reference for user_id '{user_id}' "
+        f"with vector_id '{file_id}' in index "
+        f"'{settings.PINECONE_INDEX_NAME}' namespace "
+        f"'{settings.PINECONE_NAMESPACE}'"
+    )
+
+    # -----------------------------------------
     # Remove temporary file
     # -----------------------------------------
 
@@ -369,6 +400,8 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
 
         "file_id": file_id,
 
+        "vector_id": file_id,
+
         "filename": filename,
 
         "chunks": len(chunks),
@@ -376,6 +409,10 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
         "embedding_model": "gemini-embedding-001",
 
         "vector_database": "Pinecone",
+
+        "index_name": settings.PINECONE_INDEX_NAME,
+
+        "namespace": settings.PINECONE_NAMESPACE,
 
         "profile": profile
     }

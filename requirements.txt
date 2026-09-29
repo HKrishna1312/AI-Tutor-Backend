@@ -16,3 +16,4 @@ pinecone
 python-multipart 
 pypdf 
 python-docx 
+livekit-api

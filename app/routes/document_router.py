@@ -1,8 +1,10 @@
 
-from fastapi import APIRouter, UploadFile, File, Header, HTTPException
+from fastapi import APIRouter, UploadFile, File, Header, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.document_service import process_document
 from app.core.verify_token import verify_access_token
+from app.core.db_session import get_db
 
 
 router = APIRouter(
@@ -14,7 +16,8 @@ router = APIRouter(
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    authorization: str = Header(...)
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
 ):
     if not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -36,7 +39,8 @@ async def upload_document(
 
     result = await process_document(
         file=file,
-        user_id=user_id
+        user_id=user_id,
+        db=db
     )
 
     return result
