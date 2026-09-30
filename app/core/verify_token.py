@@ -21,7 +21,6 @@ from .config import settings
 
 
 async def verify_access_token(token: str):
-
     try:
         payload = jwt.decode(
             token,

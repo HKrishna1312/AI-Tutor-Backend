@@ -3,18 +3,18 @@ import logging
 import os
 import uuid
 
-from fastapi import UploadFile, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from pypdf import PdfReader
 from docx import Document
+from fastapi import HTTPException, UploadFile
 
 from google import genai
-
+from google.genai import types
 from pinecone import Pinecone
+from pypdf import PdfReader
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.models.resume_vectors import ResumeVectorTable
-from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +307,7 @@ async def process_document(file: UploadFile, user_id: str, db: AsyncSession): #i
 
     except Exception:
 
+        logger.exception("Resume profile extraction failed")
         profile = None
 
     # -----------------------------------------
@@ -381,6 +382,33 @@ async def process_document(file: UploadFile, user_id: str, db: AsyncSession): #i
     await db.commit()
 
     await db.refresh(record)
+
+    old_records_result = await db.execute(
+        select(ResumeVectorTable).where(
+            ResumeVectorTable.user_id == str(user_id),
+            ResumeVectorTable.vector_id != file_id,
+            ResumeVectorTable.index_name == settings.PINECONE_INDEX_NAME,
+            ResumeVectorTable.namespace == settings.PINECONE_NAMESPACE,
+        )
+    )
+    old_records = old_records_result.scalars().all()
+    old_vector_ids = [
+        f"{old_record.vector_id}-chunk-{chunk_number}"
+        for old_record in old_records
+        for chunk_number in range(old_record.chunk_count or 0)
+    ]
+
+    if old_vector_ids:
+        index.delete(
+            ids=old_vector_ids,
+            namespace=settings.PINECONE_NAMESPACE
+        )
+
+    for old_record in old_records:
+        await db.delete(old_record)
+
+    if old_records:
+        await db.commit()
 
     logger.info(
         f"Stored Pinecone reference for user_id '{user_id}' "

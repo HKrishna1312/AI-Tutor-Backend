@@ -16,16 +16,22 @@ router = APIRouter(
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    authorization: str = Header(...),
+    authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db)
 ):
-    if not authorization.startswith("Bearer "):
+    if not authorization:
         raise HTTPException(
             status_code=401,
-            detail="Invalid authorization header"
+            detail="Authorization header is required; use Bearer <access_token>"
         )
 
-    access_token = authorization.split(" ", 1)[1]
+    scheme, _, access_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not access_token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization header; use Bearer <access_token>"
+        )
+
 
     payload = await verify_access_token(access_token)
 

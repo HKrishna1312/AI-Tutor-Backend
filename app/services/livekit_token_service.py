@@ -78,7 +78,8 @@ async def get_token(
             .with_metadata(
                 json.dumps(
                     {
-                        "name": display_name,
+                        "user_id": user_id,
+                        "user_name": display_name,
                         "vector_id": vector_id
                     }
                 )
@@ -95,6 +96,7 @@ async def get_token(
             "url": livekit_url,
             "room": room_name,
             "user_id": user_id,
+            "user_name": display_name,
             "vector_id": vector_id
         }
     except Exception as error:
