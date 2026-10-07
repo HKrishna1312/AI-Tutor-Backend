@@ -374,7 +374,8 @@ async def process_document(file: UploadFile, user_id: str, db: AsyncSession): #i
         filename=filename,
         index_name=settings.PINECONE_INDEX_NAME,
         namespace=settings.PINECONE_NAMESPACE,
-        chunk_count=len(chunks)
+        chunk_count=len(chunks),
+        profile=json.dumps(profile) if profile else None
     )
 
     db.add(record)

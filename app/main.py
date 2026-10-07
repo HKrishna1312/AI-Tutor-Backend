@@ -15,6 +15,12 @@ async def lifespan(app: FastAPI):
     try:
         async with async_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            existing = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'resume_vectors' AND column_name = 'profile'"
+            ))
+            if existing.first() is None:
+                await conn.execute(text("ALTER TABLE resume_vectors ADD COLUMN profile LONGTEXT NULL"))
             await conn.execute(text("SELECT 1"))
         print("Application startup complete✅")
     except Exception as e:

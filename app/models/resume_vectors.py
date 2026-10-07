@@ -5,8 +5,10 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
-    String
+    String,
+    Text
 )
+from sqlalchemy.dialects import mysql
 from app.core.connect_db import Base
 
 
@@ -20,6 +22,7 @@ class ResumeVectorTable(Base):
     index_name = Column(String(100), nullable=False)
     namespace = Column(String(100), nullable=False)
     chunk_count = Column(Integer, default=0)
+    profile = Column(Text().with_variant(mysql.LONGTEXT(), "mysql"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
