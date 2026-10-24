@@ -41,7 +41,7 @@ async def search_indeed_jobs(
             keyword=request.keyword,
             location=request.location,
             country=request.country,
-            date_posted=request.date_posted,
+            
         )
 
         return result

@@ -1,6 +1,7 @@
-
 import json
 import logging
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.services.indeed_mcp_client import (
@@ -9,7 +10,6 @@ from app.services.indeed_mcp_client import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 COUNTRY_DOMAINS = {
     "argentina": "ar.indeed.com",
@@ -48,130 +48,218 @@ COUNTRY_ALIASES = {
 
 
 class IndeedJobSearchError(Exception):
-    """Could not complete or interpret the Indeed search."""
+    """Raised when Indeed search results cannot be processed."""
 
 
 def infer_domain(
     country: str | None,
     location: str | None,
 ) -> str | None:
-    """Infer an Indeed domain from an explicit country or location."""
+    """Resolve the Indeed domain from the explicit country first."""
     country_text = (country or "").strip().lower()
     location_text = (location or "").strip().lower()
 
-    normalized_country = COUNTRY_ALIASES.get(
-        country_text,
-        country_text,
-    )
+    country_text = COUNTRY_ALIASES.get(country_text, country_text)
 
-    if normalized_country in COUNTRY_DOMAINS:
-        return COUNTRY_DOMAINS[normalized_country]
+    if country_text in COUNTRY_DOMAINS:
+        return COUNTRY_DOMAINS[country_text]
 
-    # Prefer longer names to avoid matching a short alias inside another word.
+    # Avoid short aliases such as "us" matching arbitrary words.
     combined = f"{country_text} {location_text}"
 
     for name in sorted(COUNTRY_DOMAINS, key=len, reverse=True):
         if name in combined:
             return COUNTRY_DOMAINS[name]
 
-    for alias, canonical in COUNTRY_ALIASES.items():
-        if country_text == alias:
-            return COUNTRY_DOMAINS[canonical]
-
-    # Do not silently force unknown countries to the US domain.
     return None
 
 
 def parse_provider_response(raw: Any) -> Any:
-    """Decode JSON returned as text, when possible."""
-    if isinstance(raw, (dict, list)):
-        return raw
-
+    """Unwrap MCP content and nested JSON strings."""
     if isinstance(raw, str):
         try:
-            return json.loads(raw)
+            decoded = json.loads(raw)
         except json.JSONDecodeError:
             return {"raw_text": raw}
 
+        return parse_provider_response(decoded)
+
+    if isinstance(raw, list):
+        # MCP content sometimes arrives as a list of text blocks.
+        if len(raw) == 1 and isinstance(raw[0], dict):
+            block = raw[0]
+
+            if isinstance(block.get("text"), str):
+                return parse_provider_response(block["text"])
+
+        return raw
+
+    if isinstance(raw, dict):
+        # LangChain/MCP message-style result.
+        content = raw.get("content")
+        if isinstance(content, list):
+            return parse_provider_response(content)
+
+        # HasData's outer response may contain the real result in "json".
+        if "json" in raw:
+            return parse_provider_response(raw["json"])
+
+        # Some responses wrap the actual JSON in a text string.
+        if "text" in raw and not any(
+            key in raw for key in ("jobs", "searchInformation")
+        ):
+            return parse_provider_response(raw["text"])
+
+        return raw
+
+    # Handle LangChain message objects.
     content = getattr(raw, "content", None)
-
-    if isinstance(content, str):
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"raw_text": content}
-
-    if isinstance(content, list):
-        text_parts: list[str] = []
-
-        for block in content:
-            if isinstance(block, dict):
-                text_value = block.get("text")
-                if text_value:
-                    text_parts.append(text_value)
-            elif isinstance(block, str):
-                text_parts.append(block)
-            else:
-                text_value = getattr(block, "text", None)
-                if text_value:
-                    text_parts.append(text_value)
-
-        combined = "\n".join(text_parts)
-
-        if combined:
-            try:
-                return json.loads(combined)
-            except json.JSONDecodeError:
-                return {"raw_text": combined}
+    if content is not None:
+        return parse_provider_response(content)
 
     return {"raw_text": str(raw)}
 
 
-def extract_jobs(payload: Any) -> list[dict[str, Any]] | None:
-    """
-    Return a list only for recognized job-result structures.
-    None means the response format is not recognized.
-    """
+def extract_jobs(payload: Any) -> list[dict[str, Any]]:
+    """Extract actual listings from the normalized provider payload."""
     if isinstance(payload, list):
-        if all(isinstance(item, dict) for item in payload):
-            # An empty list can represent a valid empty result.
-            return payload
-        return None
+        # Some MCP responses are arrays of text-wrapped result objects.
+        if len(payload) == 1 and isinstance(payload[0], dict):
+            if isinstance(payload[0].get("text"), str):
+                nested = parse_provider_response(payload[0]["text"])
+                return extract_jobs(nested)
 
+        if all(isinstance(item, dict) for item in payload):
+            return payload
+
+        raise IndeedJobSearchError("Unrecognized job-list response.")
+
+    if not isinstance(payload, dict):
+        raise IndeedJobSearchError("Unrecognized provider response.")
+
+    jobs = payload.get("jobs")
+
+    if isinstance(jobs, list) and all(
+        isinstance(job, dict) for job in jobs
+    ):
+        return jobs
+
+    # Recognize an explicit empty result.
+    if isinstance(jobs, list) and not jobs:
+        return []
+
+    raise IndeedJobSearchError(
+        "The provider response did not contain a recognized jobs array."
+    )
+
+
+def extract_total_results(payload: Any) -> int | None:
+    """Read the provider's estimated total from searchInformation."""
     if not isinstance(payload, dict):
         return None
 
-    # Common provider response formats.
-    for key in ("jobs", "results"):
-        value = payload.get(key)
+    info = payload.get("searchInformation", {})
+    if not isinstance(info, dict):
+        return None
 
-        if isinstance(value, list):
-            if all(isinstance(item, dict) for item in value):
-                return value
-            return None
+    value = info.get("totalResults")
 
-    # "data" is accepted only if it clearly contains job results.
-    data = payload.get("data")
-    if isinstance(data, list):
-        if all(isinstance(item, dict) for item in data):
-            if not data or any(
-                any(
-                    field in item
-                    for field in ("title", "jobTitle", "job_title")
-                )
-                for item in data
-            ):
-                return data
+    try:
+        return int(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
-    nested = payload.get("json")
-    if isinstance(nested, (dict, list)):
-        return extract_jobs(nested)
 
-    # A provider may explicitly report an empty result.
-    if payload.get("jobs") == [] or payload.get("results") == []:
-        return []
+def is_sponsored(job: dict[str, Any]) -> bool:
+    value = job.get("sponsored", False)
 
-    return None
+    if isinstance(value, bool):
+        return value
+
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def location_matches(
+    job: dict[str, Any],
+    requested_location: str,
+    country: str | None,
+) -> bool:
+    """
+    Safety filter for location.
+
+    Bengaluru/Bangalore searches accept Bengaluru/Bangalore postings,
+    Karnataka postings, and clearly India-based remote postings.
+    """
+    actual = str(job.get("location") or "").strip().lower()
+    requested = requested_location.strip().lower()
+    country_text = (country or "").strip().lower()
+
+    if not actual:
+        return False
+
+    # Explicit city aliases.
+    city_aliases = {
+        "bengaluru": ("bengaluru", "bangalore"),
+        "bangalore": ("bengaluru", "bangalore"),
+    }
+
+    aliases = city_aliases.get(requested, (requested,))
+
+    if any(alias in actual for alias in aliases):
+        return True
+
+    # Allow regional results only when the requested city is in Karnataka.
+    if (
+        any(alias in requested for alias in ("bengaluru", "bangalore"))
+        and "karnataka" in actual
+        and ("india" in actual or country_text == "india")
+    ):
+        return True
+
+    # Include remote jobs only when they explicitly indicate India.
+    if "remote" in actual and (
+        "india" in actual or "india" in country_text
+    ):
+        return True
+
+    return False
+
+
+def is_within_last_30_days(job: dict[str, Any]) -> bool:
+    """Apply a local date safety filter when a posting date is available."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=30)
+
+    iso_date = job.get("isoDate") or job.get("iso_date")
+
+    if iso_date:
+        try:
+            posted = datetime.fromisoformat(
+                str(iso_date).replace("Z", "+00:00")
+            )
+
+            if posted.tzinfo is None:
+                posted = posted.replace(tzinfo=timezone.utc)
+
+            return cutoff <= posted.astimezone(timezone.utc) <= now
+        except ValueError:
+            pass
+
+    # Fallback for relative dates, e.g. "5 days ago".
+    date_text = str(job.get("date") or "").strip().lower()
+
+    if any(
+        phrase in date_text
+        for phrase in ("just posted", "today", "yesterday")
+    ):
+        return True
+
+    match = re.search(r"(\d+)\s+days?\s+ago", date_text)
+    if match:
+        return int(match.group(1)) <= 30
+
+    # Do not claim an unknown posting date is recent.
+    return False
 
 
 class IndeedJobService:
@@ -181,7 +269,6 @@ class IndeedJobService:
         keyword: str,
         location: str,
         country: str | None = None,
-        date_posted: int | None = None,
     ) -> dict[str, Any]:
         keyword = keyword.strip()
         location = location.strip()
@@ -194,33 +281,53 @@ class IndeedJobService:
 
         domain = infer_domain(country, location)
 
+        # Include the country in the query location to reduce ambiguity.
+        provider_location = location
+        if country and country.lower() not in location.lower():
+            provider_location = f"{location}, {country}"
+
         try:
-            raw_result = await indeed_mcp_client.search_jobs(
+            raw = await indeed_mcp_client.search_jobs(
                 keyword=keyword,
-                location=location,
+                location=provider_location,
                 domain=domain,
-                date_posted=date_posted,
+                date_posted=30,
             )
         except IndeedMCPError:
-            # Preserve MCP errors so the API layer can map them to HTTP errors.
             raise
         except Exception as exc:
-            logger.exception("Unexpected error during Indeed search.")
+            logger.exception("Unexpected Indeed search failure.")
             raise IndeedJobSearchError(
                 "Unable to complete the Indeed job search."
             ) from exc
 
-        payload = parse_provider_response(raw_result)
-        jobs = extract_jobs(payload)
+        payload = parse_provider_response(raw)
+        provider_jobs = extract_jobs(payload)
+        provider_total = extract_total_results(payload)
 
-        if jobs is None:
-            logger.error(
-                "Unrecognized Indeed response. Response type: %s",
-                type(payload).__name__,
-            )
-            raise IndeedJobSearchError(
-                "The provider returned an unrecognized response format."
-            )
+        # Exclude sponsored results and locations outside the requested area.
+        location_filtered = [
+            job
+            for job in provider_jobs
+            if location_matches(job, location, country)
+        ]
+
+        organic_jobs = [
+            job for job in location_filtered if not is_sponsored(job)
+        ]
+
+        recent_jobs = [
+            job for job in organic_jobs if is_within_last_30_days(job)
+        ]
+
+        logger.info(
+            "Indeed results: provider_page=%d, location_matched=%d, "
+            "organic=%d, recent=%d",
+            len(provider_jobs),
+            len(location_filtered),
+            len(organic_jobs),
+            len(recent_jobs),
+        )
 
         return {
             "status": "success",
@@ -229,10 +336,16 @@ class IndeedJobService:
                 "location": location,
                 "country": country,
                 "domain": domain,
-                "date_posted": date_posted,
+                "date_posted_days": 30,
+                "sort": "date",
+                "sponsored_included": False,
             },
-            "count": len(jobs),
-            "jobs": jobs,
+            # Number of jobs actually returned after filtering.
+            "count": len(recent_jobs),
+            # Provider estimate, not the count of relevant jobs.
+            "provider_total_results": provider_total,
+            "provider_page_count": len(provider_jobs),
+            "jobs": recent_jobs,
         }
 
 

@@ -116,67 +116,65 @@ class IndeedMCPClient:
                     "Could not initialize Indeed MCP."
                 ) from exc
 
-    async def search_jobs(
-        self,
-        *,
-        keyword: str,
-        location: str,
-        domain: str | None = None,
-        date_posted: int | None = None,
-    ) -> Any:
-        """Invoke the listing tool with explicit, validated arguments."""
-        keyword = keyword.strip()
-        location = location.strip()
+    async def search_jobs(self,*,
+    keyword: str,
+    location: str,
+    domain: str | None = None,
+    date_posted: int | None = None,
+) -> Any:
+            keyword = keyword.strip()
+            location = location.strip()
 
-        if not keyword:
-            raise ValueError("keyword cannot be empty.")
+            if not keyword or not location:
+                raise ValueError("keyword and location are required.")
 
-        if not location:
-            raise ValueError("location cannot be empty.")
+            await self.initialize()
 
-        await self.initialize()
+            if self._listing_tool is None:
+                raise IndeedMCPToolError("Indeed listing tool is not initialized.")
 
-        if self._listing_tool is None:
-            raise IndeedMCPToolError(
-                "The Indeed listing tool is not initialized."
+            schema = self._listing_tool.get_input_schema().model_json_schema()
+            properties = schema.get("properties", {})
+
+            arguments: dict[str, Any] = {
+                "keyword": keyword,
+                "location": location,
+            }
+
+            # Pass the India domain when the tool supports it.
+            if domain and "domain" in properties:
+                arguments["domain"] = domain
+
+            # Prefer newest listings.
+            if "sort" in properties:
+                arguments["sort"] = "date"
+
+            # Use the provider's date filter only if exposed by its tool schema.
+            if date_posted is not None and "datePosted" in properties:
+                arguments["datePosted"] = date_posted
+
+            logger.info(
+                "Indeed search: keyword=%r location=%r domain=%r",
+                keyword,
+                location,
+                domain,
             )
+            logger.debug("Indeed tool argument keys: %s", list(arguments.keys()))
 
-        # These are the required argument names reported by your MCP error.
-        arguments: dict[str, Any] = {
-            "keyword": keyword,
-            "location": location,
-        }
-
-        # Only pass optional arguments when the tool schema supports them.
-        schema = self._listing_tool.get_input_schema().model_json_schema()
-        properties = schema.get("properties", {})
-
-        if domain and "domain" in properties:
-            arguments["domain"] = domain
-
-        if date_posted is not None and "datePosted" in properties:
-            arguments["datePosted"] = date_posted
-
-        logger.info(
-            "Calling Indeed listing tool with argument keys: %s",
-            list(arguments.keys()),
-        )
-        logger.debug("Indeed search arguments: %s", arguments)
-
-        try:
-            return await asyncio.wait_for(
-                self._listing_tool.ainvoke(arguments),
-                timeout=45,
-            )
-        except asyncio.TimeoutError as exc:
-            raise IndeedMCPConnectionError(
-                "The Indeed listing request timed out."
-            ) from exc
-        except Exception as exc:
-            logger.exception("Indeed listing tool execution failed.")
-            raise IndeedMCPToolError(
-                f"Indeed listing tool execution failed: {exc}"
-            ) from exc
+            try:
+                return await asyncio.wait_for(
+                    self._listing_tool.ainvoke(arguments),
+                    timeout=45,
+                )
+            except asyncio.TimeoutError as exc:
+                raise IndeedMCPConnectionError(
+                    "Indeed search timed out."
+                ) from exc
+            except Exception as exc:
+                logger.exception("Indeed listing tool execution failed.")
+                raise IndeedMCPToolError(
+                    f"Indeed listing tool execution failed: {exc}"
+                ) from exc
 
     async def close(self) -> None:
         """Clear cached references."""
