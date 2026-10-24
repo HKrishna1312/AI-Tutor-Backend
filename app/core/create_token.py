@@ -42,7 +42,7 @@ def create_access_token(data: dict):
 
     payload.update({
         "type": "access",
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=1)
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=30)
     })
 
     return jwt.encode(

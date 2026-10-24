@@ -74,6 +74,7 @@ async def check_user(
 
         return {
             "status": "Login Successful",
+            "user_id": str(res["user_id"]),
             "access_token": access_token,
             "refresh_token": refresh_token
         }

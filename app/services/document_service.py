@@ -1,17 +1,22 @@
 import json
+import logging
 import os
 import uuid
 
-from fastapi import UploadFile, HTTPException
-
-from pypdf import PdfReader
 from docx import Document
+from fastapi import HTTPException, UploadFile
 
 from google import genai
-
-from pinecone import Pinecone
-from app.core.config import settings
 from google.genai import types
+from pinecone import Pinecone
+from pypdf import PdfReader
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.resume_vectors import ResumeVectorTable
+
+logger = logging.getLogger(__name__)
 
 
 gemini_client = genai.Client(
@@ -209,7 +214,7 @@ def extract_resume_profile(text):
 # Process document
 # -----------------------------------------
 
-async def process_document(file: UploadFile,user_id: str): #included user_id parameter to support multiple user resume queries.
+async def process_document(file: UploadFile, user_id: str, db: AsyncSession): #included user_id parameter to support multiple user resume queries.
 
     filename = file.filename
 
@@ -302,6 +307,7 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
 
     except Exception:
 
+        logger.exception("Resume profile extraction failed")
         profile = None
 
     # -----------------------------------------
@@ -359,6 +365,60 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
     )
 
     # -----------------------------------------
+    # Save Pinecone reference for this user
+    # -----------------------------------------
+
+    record = ResumeVectorTable(
+        user_id=str(user_id),
+        vector_id=file_id,
+        filename=filename,
+        index_name=settings.PINECONE_INDEX_NAME,
+        namespace=settings.PINECONE_NAMESPACE,
+        chunk_count=len(chunks),
+        profile=json.dumps(profile) if profile else None
+    )
+
+    db.add(record)
+
+    await db.commit()
+
+    await db.refresh(record)
+
+    old_records_result = await db.execute(
+        select(ResumeVectorTable).where(
+            ResumeVectorTable.user_id == str(user_id),
+            ResumeVectorTable.vector_id != file_id,
+            ResumeVectorTable.index_name == settings.PINECONE_INDEX_NAME,
+            ResumeVectorTable.namespace == settings.PINECONE_NAMESPACE,
+        )
+    )
+    old_records = old_records_result.scalars().all()
+    old_vector_ids = [
+        f"{old_record.vector_id}-chunk-{chunk_number}"
+        for old_record in old_records
+        for chunk_number in range(old_record.chunk_count or 0)
+    ]
+
+    if old_vector_ids:
+        index.delete(
+            ids=old_vector_ids,
+            namespace=settings.PINECONE_NAMESPACE
+        )
+
+    for old_record in old_records:
+        await db.delete(old_record)
+
+    if old_records:
+        await db.commit()
+
+    logger.info(
+        f"Stored Pinecone reference for user_id '{user_id}' "
+        f"with vector_id '{file_id}' in index "
+        f"'{settings.PINECONE_INDEX_NAME}' namespace "
+        f"'{settings.PINECONE_NAMESPACE}'"
+    )
+
+    # -----------------------------------------
     # Remove temporary file
     # -----------------------------------------
 
@@ -369,6 +429,8 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
 
         "file_id": file_id,
 
+        "vector_id": file_id,
+
         "filename": filename,
 
         "chunks": len(chunks),
@@ -376,6 +438,10 @@ async def process_document(file: UploadFile,user_id: str): #included user_id par
         "embedding_model": "gemini-embedding-001",
 
         "vector_database": "Pinecone",
+
+        "index_name": settings.PINECONE_INDEX_NAME,
+
+        "namespace": settings.PINECONE_NAMESPACE,
 
         "profile": profile
     }

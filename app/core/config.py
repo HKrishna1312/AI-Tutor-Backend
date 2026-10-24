@@ -31,5 +31,9 @@ class Settings(BaseSettings):
     INDEED_MCP_URL: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     INDEED_MCP_TIMEOUT_SECONDS: int = 30
+    LIVEKIT_URL: str = ""
+    LIVEKIT_API_KEY: str = ""
+    LIVEKIT_API_SECRET: str = ""
+
 
 settings = Settings()
