@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field
 
 
 class IndeedJobSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=1, max_length=200)
-    location: str = Field(..., min_length=1, max_length=200)
+    keyword: str = Field(default="Staff Distributed Systems Architect Python Kafka", max_length=200)
+    location: str = Field(default="San Francisco", max_length=200)
     country: str | None = Field(default=None, max_length=100)
 
 
