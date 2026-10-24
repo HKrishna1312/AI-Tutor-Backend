@@ -7,7 +7,7 @@ from app.core.connect_db import async_engine
 from app.models.user_details import Base
 from sqlalchemy import text
 
-from app.routes import add_user_route, user_login_route, message_route, user_auth_route, password_reset_route, document_router
+from app.routes import add_user_route, user_login_route, message_route, user_auth_route, password_reset_route, document_router,indeed_jobs_route 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,7 +39,8 @@ router = [add_user_route.router,
           message_route.router, 
           user_auth_route.router, 
           password_reset_route.router,
-          document_router.router]
+          document_router.router,
+          indeed_jobs_route.router]
 
 for r in router:
     app.include_router(r)

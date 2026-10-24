@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     PINECONE_API_KEY: str = ""
     PINECONE_INDEX_NAME: str = ""
     PINECONE_NAMESPACE: str = "__default__"
-    
-    
+    HASDATA_API_KEY: str = ""
+    INDEED_MCP_URL: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    INDEED_MCP_TIMEOUT_SECONDS: int = 30
+
 settings = Settings()

@@ -16,3 +16,11 @@ pinecone
 python-multipart 
 pypdf 
 python-docx 
+google-generativeai
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-mcp-adapters
+langgraph
+mcp
