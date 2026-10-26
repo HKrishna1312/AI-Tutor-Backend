@@ -331,9 +331,6 @@ class IndeedJobService:
         if provider_jobs:
             for idx, j in enumerate(provider_jobs):
                 formatted_jobs.append(format_mcp_job(j, idx))
-        else:
-            # Fallback ONLY when MCP client is unavailable or returns 0 jobs
-            formatted_jobs = DEFAULT_CALIBRATED_JOBS
 
         logger.info(
             "Indeed MCP search complete: raw=%d, returned_formatted=%d",
