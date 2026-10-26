@@ -66,115 +66,126 @@ class IndeedMCPClient:
             if self._listing_tool is not None:
                 return
 
-            try:
-                client = self._create_client()
+            last_exc = None
+            for attempt in range(1, 4):
+                try:
+                    client = self._create_client()
 
-                tools = await asyncio.wait_for(
-                    client.get_tools(),
-                    timeout=30,
-                )
-
-                listing_tool = next(
-                    (
-                        tool
-                        for tool in tools
-                        if tool.name == LISTING_TOOL
-                    ),
-                    None,
-                )
-
-                if listing_tool is None:
-                    available = [tool.name for tool in tools]
-                    logger.error(
-                        "Indeed listing tool not found. Available tools: %s",
-                        available,
-                    )
-                    raise IndeedMCPToolError(
-                        "The Indeed listing tool was not found."
+                    tools = await asyncio.wait_for(
+                        client.get_tools(),
+                        timeout=30,
                     )
 
-                # Keep the original tool and its schema intact.
-                self._client = client
-                self._listing_tool = listing_tool
+                    listing_tool = next(
+                        (
+                            tool
+                            for tool in tools
+                            if tool.name == LISTING_TOOL
+                        ),
+                        None,
+                    )
 
-                logger.info("Indeed MCP connected successfully.")
+                    if listing_tool is None:
+                        available = [tool.name for tool in tools]
+                        logger.error(
+                            "Indeed listing tool not found. Available tools: %s",
+                            available,
+                        )
+                        raise IndeedMCPToolError(
+                            "The Indeed listing tool was not found."
+                        )
 
-                logger.debug(
-                    "Indeed listing tool input schema: %s",
-                    listing_tool.get_input_schema().model_json_schema(),
+                    # Keep the original tool and its schema intact.
+                    self._client = client
+                    self._listing_tool = listing_tool
+
+                    logger.info("Indeed MCP connected successfully on attempt %d.", attempt)
+                    return
+
+                except IndeedMCPError as exc:
+                    last_exc = exc
+                    logger.warning("Indeed MCP initialization attempt %d failed: %s", attempt, exc)
+                    if attempt < 3:
+                        await asyncio.sleep(1.0)
+                except asyncio.TimeoutError as exc:
+                    last_exc = exc
+                    logger.warning("Indeed MCP connection attempt %d timed out.", attempt)
+                    if attempt < 3:
+                        await asyncio.sleep(1.0)
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning("Indeed MCP initialization attempt %d failed: %s", attempt, exc)
+                    if attempt < 3:
+                        await asyncio.sleep(1.0)
+
+            raise IndeedMCPConnectionError(
+                f"Could not initialize Indeed MCP after 3 attempts: {last_exc}"
+            ) from last_exc
+
+    async def search_jobs(
+        self,
+        *,
+        keyword: str,
+        location: str,
+        domain: str | None = None,
+        date_posted: int | None = None,
+    ) -> Any:
+        keyword = keyword.strip()
+        location = location.strip()
+
+        if not keyword or not location:
+            raise ValueError("keyword and location are required.")
+
+        last_exc = None
+        for attempt in range(1, 3):
+            try:
+                await self.initialize()
+
+                if self._listing_tool is None:
+                    raise IndeedMCPToolError("Indeed listing tool is not initialized.")
+
+                schema = self._listing_tool.get_input_schema().model_json_schema()
+                properties = schema.get("properties", {})
+
+                arguments: dict[str, Any] = {
+                    "keyword": keyword,
+                    "location": location,
+                }
+
+                # Pass the India domain when the tool supports it.
+                if domain and "domain" in properties:
+                    arguments["domain"] = domain
+
+                # Prefer newest listings.
+                if "sort" in properties:
+                    arguments["sort"] = "date"
+
+                # Use the provider's date filter only if exposed by its tool schema.
+                if date_posted is not None and "datePosted" in properties:
+                    arguments["datePosted"] = date_posted
+
+                logger.info(
+                    "Indeed search (attempt %d): keyword=%r location=%r domain=%r",
+                    attempt,
+                    keyword,
+                    location,
+                    domain,
                 )
 
-            except IndeedMCPError:
-                raise
-            except asyncio.TimeoutError as exc:
-                raise IndeedMCPConnectionError(
-                    "Timed out while connecting to Indeed MCP."
-                ) from exc
-            except Exception as exc:
-                logger.exception("Indeed MCP initialization failed.")
-                raise IndeedMCPConnectionError(
-                    "Could not initialize Indeed MCP."
-                ) from exc
-
-    async def search_jobs(self,*,
-    keyword: str,
-    location: str,
-    domain: str | None = None,
-    date_posted: int | None = None,
-) -> Any:
-            keyword = keyword.strip()
-            location = location.strip()
-
-            if not keyword or not location:
-                raise ValueError("keyword and location are required.")
-
-            await self.initialize()
-
-            if self._listing_tool is None:
-                raise IndeedMCPToolError("Indeed listing tool is not initialized.")
-
-            schema = self._listing_tool.get_input_schema().model_json_schema()
-            properties = schema.get("properties", {})
-
-            arguments: dict[str, Any] = {
-                "keyword": keyword,
-                "location": location,
-            }
-
-            # Pass the India domain when the tool supports it.
-            if domain and "domain" in properties:
-                arguments["domain"] = domain
-
-            # Prefer newest listings.
-            if "sort" in properties:
-                arguments["sort"] = "date"
-
-            # Use the provider's date filter only if exposed by its tool schema.
-            if date_posted is not None and "datePosted" in properties:
-                arguments["datePosted"] = date_posted
-
-            logger.info(
-                "Indeed search: keyword=%r location=%r domain=%r",
-                keyword,
-                location,
-                domain,
-            )
-            logger.debug("Indeed tool argument keys: %s", list(arguments.keys()))
-
-            try:
                 return await asyncio.wait_for(
                     self._listing_tool.ainvoke(arguments),
                     timeout=45,
                 )
-            except asyncio.TimeoutError as exc:
-                raise IndeedMCPConnectionError(
-                    "Indeed search timed out."
-                ) from exc
             except Exception as exc:
-                logger.exception("Indeed listing tool execution failed.")
-                raise IndeedMCPToolError(
-                    f"Indeed listing tool execution failed: {exc}"
-                ) from exc
+                last_exc = exc
+                logger.warning("Indeed listing tool execution attempt %d failed: %s", attempt, exc)
+                await self.close()
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+
+        raise IndeedMCPToolError(
+            f"Indeed listing tool execution failed after retries: {last_exc}"
+        ) from last_exc
 
     async def close(self) -> None:
         """Clear cached references."""

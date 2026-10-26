@@ -313,6 +313,7 @@ class IndeedJobService:
 
         provider_jobs = []
         provider_total = None
+        mcp_error = False
 
         try:
             raw = await indeed_mcp_client.search_jobs(
@@ -325,12 +326,16 @@ class IndeedJobService:
             provider_jobs = extract_jobs(payload)
             provider_total = extract_total_results(payload)
         except Exception as exc:
-            logger.warning("MCP Search failed or unconfigured, falling back to calibrated benchmark data: %s", exc)
+            logger.warning("MCP Search failed or unconfigured: %s", exc)
+            mcp_error = True
 
         formatted_jobs = []
         if provider_jobs:
             for idx, j in enumerate(provider_jobs):
                 formatted_jobs.append(format_mcp_job(j, idx))
+        elif mcp_error:
+            # Fallback ONLY when MCP client is unavailable or failed with an exception
+            formatted_jobs = DEFAULT_CALIBRATED_JOBS
 
         logger.info(
             "Indeed MCP search complete: raw=%d, returned_formatted=%d",
