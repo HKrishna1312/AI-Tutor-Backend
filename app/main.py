@@ -6,9 +6,10 @@ from contextlib import asynccontextmanager
 from app.core.connect_db import async_engine
 from app.models.user_details import Base
 from app.models.resume_vectors import ResumeVectorTable
+from app.models.interview_assessment import InterviewSessionTable, InterviewAttemptTable
 from sqlalchemy import text
 
-from app.routes import add_user_route, user_login_route, message_route, user_auth_route, password_reset_route, document_router, livekit_token_route,indeed_jobs_route
+from app.routes import add_user_route, user_login_route, message_route, user_auth_route, password_reset_route, document_router, livekit_token_route,indeed_jobs_route, interview_assessment_route
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,7 +49,8 @@ router = [add_user_route.router,
           password_reset_route.router,
           document_router.router,
           livekit_token_route.router,
-          indeed_jobs_route.router]
+          indeed_jobs_route.router,
+          interview_assessment_route.router]
 
 for r in router:
     app.include_router(r)
